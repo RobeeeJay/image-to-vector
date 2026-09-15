@@ -1,4 +1,5 @@
 import io
+import re
 
 import pytest
 import segno
@@ -7,11 +8,11 @@ from PIL import Image
 
 from conftest import draw_shapes, symbol_image
 from image_to_vector import codes as codes_module
-from image_to_vector.codes import detect_codes, overlay_codes
+from image_to_vector.codes import detect_codes, erase_regions, overlay_codes
 from image_to_vector.tracer import TraceSettings, trace
 
 
-def render(svg: str, size) -> Image.Image:
+def render(svg: str, size, transparent=False) -> Image.Image:
     """Rasterise with Qt, as the preview does."""
     from PySide6.QtCore import QByteArray, QRectF, Qt
     from PySide6.QtGui import QImage, QPainter
@@ -19,7 +20,7 @@ def render(svg: str, size) -> Image.Image:
 
     w, h = size
     out = QImage(w, h, QImage.Format.Format_RGBA8888)
-    out.fill(Qt.GlobalColor.white)
+    out.fill(Qt.GlobalColor.transparent if transparent else Qt.GlobalColor.white)
     painter = QPainter(out)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
     QSvgRenderer(QByteArray(svg.encode())).render(painter, QRectF(0, 0, w, h))
@@ -119,6 +120,50 @@ def test_linear_barcode_frame_spans_the_bars_but_not_the_digits(scale, angle, ca
     tl, tr, _, bl = (complex(*p) for p in found[0].corners)
     assert abs(abs(tr - tl) - 95 * scale) <= 0.6, f"width {abs(tr - tl):.1f}, expected {95 * scale}"
     assert abs(abs(bl - tl) - bar_height) <= 0.02 * bar_height + 1, f"height {abs(bl - tl):.1f}, bars are {bar_height}"
+
+
+@pytest.mark.parametrize("inverted", [False, True], ids=["dark-on-light", "light-on-dark"])
+def test_black_and_white_codes_leave_the_lighter_color_transparent(qapp, inverted):
+    dark, light = (20, 20, 20), (235, 235, 235)
+    symbol = symbol_image("bw", "QRCode", 8, dark=light if inverted else dark, light=dark if inverted else light)
+    image = Image.new("RGB", (symbol.width + 80, symbol.height + 80), light)
+    image.paste(symbol, (40, 40))
+    image = image.convert("RGBA")
+    found, _ = detect_codes(image)
+    assert len(found) == 1
+    code = found[0]
+    trace_only = trace(image, TraceSettings(colormode="binary"), erase_regions(found))
+    svg = overlay_codes(trace_only, found, black_and_white=True)
+    assert set(re.findall(r'fill="(#[0-9A-F]{6})"', svg)) == {"#000000"}
+
+    rows, cols = len(code.modules), len(code.modules[0])
+    to_image = codes_module._square_to_quad([complex(*p) for p in code.corners])
+    centers = {
+        on: [to_image((x + 0.5) / cols, (y + 0.5) / rows) for y in range(rows) for x in range(cols) if code.modules[y][x] == on]
+        for on in (True, False)
+    }
+    drawn = render(svg, image.size, transparent=True)
+    bare = render(trace_only, image.size, transparent=True)
+
+    def alpha(img, z):
+        return img.getpixel((int(z.real), int(z.imag)))[3]
+
+    # Modules are the light part of an inverted code, so they are the transparent ones there.
+    transparent, black = (centers[True], centers[False]) if inverted else (centers[False], centers[True])
+    assert all(alpha(drawn, z) == 0 for z in transparent), "lighter color is not transparent"
+    assert all(alpha(drawn, z) == 255 and drawn.getpixel((int(z.real), int(z.imag)))[0] < 30 for z in black)
+    # Nothing traced under the code: it would show through the transparent parts.
+    assert all(alpha(bare, z) == 0 for z in centers[True] + centers[False]), "trace left shapes under the code"
+    # Over white it still scans.
+    again, _ = detect_codes(Image.alpha_composite(Image.new("RGBA", image.size, "white"), drawn))
+    assert [c.text for c in again] == ["bw"]
+
+
+def test_color_codes_keep_their_colors_and_background():
+    found, _ = detect_codes(symbol_image("colors", "QRCode", 6, dark=(20, 40, 160), light=(250, 220, 60)))
+    svg = overlay_codes(trace(symbol_image("colors", "QRCode", 6).convert("RGBA"), TraceSettings()), found)
+    group = re.search(r"<g data-format.*?</g>", svg, re.S).group(0)
+    assert set(re.findall(r'fill="(#[0-9A-F]{6})"', group)) == {found[0].on_color, found[0].off_color}
 
 
 def test_code_colors_follow_the_original():

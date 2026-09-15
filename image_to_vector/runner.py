@@ -35,11 +35,11 @@ class TraceRunner(QObject):
     def is_busy(self) -> bool:
         return self._proc is not None
 
-    def start(self, data: bytes, settings: TraceSettings) -> None:
+    def start(self, data: bytes, settings: TraceSettings, erase=()) -> None:
         """Trace an image file's contents; a trace still running is killed and never reported."""
         self._stop()
         recv_conn, send_conn = self._ctx.Pipe(duplex=False)
-        self._proc = self._ctx.Process(target=trace_to_pipe, args=(send_conn, data, settings), daemon=True)
+        self._proc = self._ctx.Process(target=trace_to_pipe, args=(send_conn, data, settings, erase), daemon=True)
         self._proc.start()
         # Drop our copy of the send end so a crashed child reads as EOF.
         send_conn.close()

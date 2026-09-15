@@ -263,6 +263,24 @@ def test_retrace_keeps_detected_codes(window, qr_png, wait_until):
     assert 'data-format="QRCode"' in window.svg_text()
 
 
+def test_black_and_white_mode_draws_codes_black_on_transparent(window, qr_png, wait_until):
+    window.apply_settings(replace(window.settings(), colormode="binary"))
+    window.open_path(str(qr_png))
+    assert wait_until(lambda: window.svg_text() is not None)
+    window.detect_button.click()
+    # Detecting retraces with the code area erased, so no trace sits under it.
+    assert window._runner.is_busy(), "detect did not retrace"
+    assert wait_until(lambda: not window._runner.is_busy())
+    group = re.search(r"<g data-format.*?</g>", window.svg_text(), re.S).group(0)
+    assert set(re.findall(r'fill="(#[0-9A-F]{6})"', group)) == {"#000000"}, group[:300]
+    # Back in color the code gets its light background again.
+    window.apply_settings(replace(window.settings(), colormode="color"))
+    assert wait_until(lambda: window._runner.is_busy(), timeout=5)
+    assert wait_until(lambda: not window._runner.is_busy())
+    group = re.search(r"<g data-format.*?</g>", window.svg_text(), re.S).group(0)
+    assert len(set(re.findall(r'fill="(#[0-9A-F]{6})"', group))) == 2, group[:300]
+
+
 def test_detect_with_nothing_found_says_so(window, shapes_png, wait_until):
     window.open_path(str(shapes_png))
     assert wait_until(lambda: window.svg_text() is not None)

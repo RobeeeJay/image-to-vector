@@ -7,11 +7,12 @@ from __future__ import annotations
 
 import io
 import re
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
 import vtracer
-from PIL import Image, ImageOps
+from PIL import Image, ImageDraw, ImageOps
 
 SUPPORTED_SUFFIXES = (".png", ".jpg", ".jpeg", ".tif", ".tiff")
 
@@ -53,8 +54,16 @@ def load_image(source: str | Path | bytes) -> Image.Image:
         return im.convert("RGBA")
 
 
-def trace(image: Image.Image, settings: TraceSettings) -> str:
-    """Trace an RGBA image and return SVG text sized to the image."""
+def trace(image: Image.Image, settings: TraceSettings, erase: Sequence = ()) -> str:
+    """Trace an RGBA image and return SVG text sized to the image.
+
+    erase: (polygon, rgb) pairs painted over the image first, in original pixels.
+    """
+    if erase:
+        image = image.copy()
+        draw = ImageDraw.Draw(image)
+        for points, color in erase:
+            draw.polygon(points, fill=(*color, 255))
     w, h = image.size
     scale = min(1.0, settings.max_size / max(w, h))
     work = image
@@ -83,10 +92,10 @@ def _set_output_size(svg: str, traced: tuple[int, int], original: tuple[int, int
     return out
 
 
-def trace_to_pipe(conn, data: bytes, settings: TraceSettings) -> None:
+def trace_to_pipe(conn, data: bytes, settings: TraceSettings, erase: Sequence = ()) -> None:
     """Child-process entry point: send ("ok", svg) or ("error", message)."""
     try:
-        conn.send(("ok", trace(load_image(data), settings)))
+        conn.send(("ok", trace(load_image(data), settings, erase)))
     except Exception as exc:
         conn.send(("error", f"{type(exc).__name__}: {exc}"))
     finally:

@@ -260,44 +260,84 @@ def _hex(c) -> str:
 _SVG_SIZE = re.compile(r'<svg[^>]* width="(\d+)" height="(\d+)" viewBox="0 0 (\d+) (\d+)"')
 
 
-def overlay_codes(svg: str, codes: list[DetectedCode]) -> str:
+def overlay_codes(svg: str, codes: list[DetectedCode], black_and_white: bool = False) -> str:
     """svg with the codes drawn on top of the trace."""
     ow, oh, tw, th = map(int, _SVG_SIZE.search(svg).groups())
     # Codes are in original-image pixels; a downscaled trace's viewBox is in traced pixels.
     parts = [f'<g id="detected-codes" transform="scale({tw / ow:.6g} {th / oh:.6g})">']
-    parts += [_code_svg(code) for code in codes]
+    parts += [_code_svg(code, black_and_white) for code in codes]
     parts.append("</g>\n")
     end = svg.rindex("</svg>")
     return svg[:end] + "\n".join(parts) + svg[end:]
 
 
-def _code_svg(code: DetectedCode) -> str:
+def _margins(code: DetectedCode) -> tuple[int, int]:
+    # One module of background around the symbol hides the trace's fuzzy
+    # edges; linear codes get it only at the ends, above and below are digits.
+    return 1, 0 if code.linear else 1
+
+
+def erase_regions(codes: list[DetectedCode]) -> list[tuple[tuple[Point, ...], tuple[int, int, int]]]:
+    """(polygon, color) for each code's area, to paint over the bitmap before tracing.
+
+    Painted in the code's lighter color, so nothing is traced there: in black
+    and white that color is left transparent, and traced shapes under the
+    redrawn code would show through it (and be cut by plotters even if hidden).
+    """
+    regions = []
+    for code in codes:
+        rows, cols = len(code.modules), len(code.modules[0])
+        mx, my = _margins(code)
+        to_image = _square_to_quad([complex(*p) for p in code.corners])
+        corners = [to_image(x / cols, y / rows) for x, y in ((-mx, -my), (cols + mx, -my), (cols + mx, rows + my), (-mx, rows + my))]
+        lighter = max(_rgb(code.on_color), _rgb(code.off_color), key=_luminance)
+        regions.append((tuple((z.real, z.imag) for z in corners), lighter))
+    return regions
+
+
+def _code_svg(code: DetectedCode, black_and_white: bool) -> str:
     rows, cols = len(code.modules), len(code.modules[0])
+    mx, my = _margins(code)
     to_image = _square_to_quad([complex(*p) for p in code.corners])
 
     def quad(x0: float, y0: float, x1: float, y1: float) -> str:
         points = [to_image(x / cols, y / rows) for x, y in ((x0, y0), (x1, y0), (x1, y1), (x0, y1))]
         return "M" + "L".join(f"{z.real:.2f} {z.imag:.2f}" for z in points) + "Z"
 
-    # One module of background around the symbol hides the trace's fuzzy edges.
-    background = quad(-1, 0, cols + 1, rows) if code.linear else quad(-1, -1, cols + 1, rows + 1)
-    modules = []
-    for y, row in enumerate(code.modules):
-        # Overlapping the next row slightly stops antialiasing leaving hairline seams between rows.
-        bottom = y + 1 + (0.02 if y + 1 < rows else 0)
-        x = 0
-        while x < cols:
-            if not row[x]:
-                x += 1
-                continue
-            run = x
-            while run < cols and row[run]:
-                run += 1
-            modules.append(quad(x, y, run, bottom))
-            x = run
-    return (
-        f"<g data-format={quoteattr(code.format)} data-value={quoteattr(code.text)}>\n"
-        f'<path d="{background}" fill="{code.off_color}"/>\n'
-        f'<path d="{"".join(modules)}" fill="{code.on_color}"/>\n'
-        "</g>"
-    )
+    def module(x: int, y: int) -> bool:
+        return 0 <= x < cols and 0 <= y < rows and code.modules[y][x]
+
+    def runs(painted, xs: range, ys: range) -> str:
+        parts = []
+        for y in ys:
+            # Overlapping the next row slightly stops antialiasing leaving hairline seams between rows.
+            bottom = y + 1 + (0.02 if y + 1 < ys.stop else 0)
+            x = xs.start
+            while x < xs.stop:
+                if not painted(x, y):
+                    x += 1
+                    continue
+                run = x
+                while run < xs.stop and painted(run, y):
+                    run += 1
+                parts.append(quad(x, y, run, bottom))
+                x = run
+        return "".join(parts)
+
+    if not black_and_white:
+        body = (
+            f'<path d="{quad(-mx, -my, cols + mx, rows + my)}" fill="{code.off_color}"/>\n'
+            f'<path d="{runs(module, range(cols), range(rows))}" fill="{code.on_color}"/>'
+        )
+    elif _luminance(_rgb(code.on_color)) <= _luminance(_rgb(code.off_color)):
+        # Like the black-and-white trace: the darker color in black, the lighter left transparent.
+        body = f'<path d="{runs(module, range(cols), range(rows))}" fill="#000000"/>'
+    else:
+        # Inverted code, light modules on dark: the margin and the gaps between modules are the dark part.
+        everything_else = runs(lambda x, y: not module(x, y), range(-mx, cols + mx), range(-my, rows + my))
+        body = f'<path d="{everything_else}" fill="#000000"/>'
+    return f"<g data-format={quoteattr(code.format)} data-value={quoteattr(code.text)}>\n{body}\n</g>"
+
+
+def _rgb(hex_color: str) -> tuple[int, int, int]:
+    return tuple(int(hex_color[i : i + 2], 16) for i in (1, 3, 5))

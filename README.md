@@ -36,6 +36,11 @@ uv run image-to-vector --export photo.jpg photo.svg
 
 ## Standalone bundles
 
+Ready-built bundles for macOS (Apple Silicon), Windows and Linux are on the
+[releases page](https://github.com/RobeeeJay/image-to-vector/releases).
+Pushing a `v*` tag builds and smoke-tests all three on GitHub's runners, and
+publishes them as a release only if all three pass.
+
 PyInstaller builds a self-contained app that needs no Python install. It
 cannot cross-compile, so build on each target OS:
 
@@ -54,13 +59,15 @@ Qt's offscreen platform.
   It runs only on the architecture it was built on.
 - **Windows and Linux:** `.github/workflows/bundles.yml` builds and
   smoke-tests on GitHub's runners. On its first run the Linux bundle built and
-  passed its smoke test; that is headless, so it has not been seen on a Linux
-  desktop. Windows failed in the test suite. Two tests broke on Windows by
-  construction: a subprocess started with a stripped environment (Windows
-  Python needs `SYSTEMROOT`), and a path compared as a string (Qt returns
-  `C:/...` with forward slashes). Both are fixed, but the Windows job has not
-  run again yet. Test failures now appear as annotations on the workflow run,
-  which can be read without access to the logs.
+  passed its smoke test. Windows failed in the test suite. Two tests broke on
+  Windows by construction: a subprocess started with a stripped environment
+  (Windows Python needs `SYSTEMROOT`), and a path compared as a string (Qt
+  returns `C:/...` with forward slashes). With both fixed, the second run
+  passed on all three platforms: tests, bundle build and smoke test. The
+  failing log was never seen, so which of the two failed first is not known.
+  The smoke tests are headless, and the Windows and Linux bundles have not
+  been opened on a desktop. Test failures now appear as annotations on the
+  workflow run, which can be read without access to the logs.
 
 Gotcha: zxing-cpp's native code imports Python's `json` module when it reads a
 barcode's metadata. PyInstaller's import scan can't see that, so the first
@@ -109,6 +116,13 @@ until the button is turned off. From the command line:
 `image-to-vector --export --codes photo.jpg photo.svg` prints the values and
 overlays them.
 
+- In Black & White mode a code's lighter color is left transparent and the
+  darker one is drawn in black, like the rest of the trace. For inverted codes
+  (light modules on dark) the modules are the transparent part. The code's
+  area is painted over with its lighter color before tracing, so no traced
+  shapes sit under it: they would show through the transparent parts, and a
+  plotter or cutter would still follow them even where they are covered. So
+  turning Detect Codes on or off retraces.
 - Every regenerated code is decoded again before it is used. One that does not
   decode to exactly the original bytes is listed as "left as traced" and not
   drawn. This happens with formats zxing-cpp cannot write, and it can happen

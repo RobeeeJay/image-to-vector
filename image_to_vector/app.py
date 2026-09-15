@@ -39,7 +39,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .codes import DetectedCode, detect_codes, display_name, overlay_codes
+from .codes import DetectedCode, detect_codes, display_name, erase_regions, overlay_codes
 from .runner import TraceRunner
 from .tracer import SUPPORTED_SUFFIXES, TraceSettings, is_supported, load_image
 
@@ -455,6 +455,9 @@ class MainWindow(QMainWindow):
         self._image: Image.Image | None = None
         self._traced_svg: str | None = None  # the trace alone
         self._codes: list[DetectedCode] = []  # drawn over every trace until unchecked
+        # Mode of the trace in flight and of the one shown; settings may change in between.
+        self._pending_black_and_white = False
+        self._traced_black_and_white = False
         self._svg: str | None = None  # what is previewed and saved
         self._trace_started = 0.0
 
@@ -668,7 +671,9 @@ class MainWindow(QMainWindow):
     def _start_trace(self) -> None:
         self._debounce.stop()
         self._trace_started = time.monotonic()
-        self._runner.start(self._data, self.settings())
+        settings = self.settings()
+        self._pending_black_and_white = settings.colormode == "binary"
+        self._runner.start(self._data, settings, erase_regions(self._codes))
 
     def _on_busy_changed(self, busy: bool) -> None:
         if busy:
@@ -680,6 +685,7 @@ class MainWindow(QMainWindow):
 
     def _on_traced(self, svg: str) -> None:
         self._traced_svg = svg
+        self._traced_black_and_white = self._pending_black_and_white
         self._show_svg()
         elapsed = time.monotonic() - self._trace_started
         size_kb = len(svg.encode()) / 1024
@@ -696,7 +702,10 @@ class MainWindow(QMainWindow):
     def _show_svg(self) -> None:
         if self._traced_svg is None:
             return
-        self._svg = overlay_codes(self._traced_svg, self._codes) if self._codes else self._traced_svg
+        if self._codes:
+            self._svg = overlay_codes(self._traced_svg, self._codes, self._traced_black_and_white)
+        else:
+            self._svg = self._traced_svg
         self.svg_view.set_svg(self._svg)
 
     def _set_detect_checked(self, checked: bool) -> None:
@@ -709,6 +718,7 @@ class MainWindow(QMainWindow):
             self._codes = []
             self.codes_label.hide()
             self._show_svg()
+            self._start_trace()  # the code areas were erased before tracing; bring them back
             return
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
@@ -721,8 +731,10 @@ class MainWindow(QMainWindow):
         self.codes_label.show()
         if not codes:
             self._set_detect_checked(False)
+            return
         self._codes = codes
         self._show_svg()
+        self._start_trace()  # retrace with the code areas erased
 
     def svg_text(self) -> str | None:
         return self._svg
@@ -783,22 +795,7 @@ def export(image_path: str, svg_path: str, codes: bool = False) -> int:
     except OSError as exc:
         print(f"error: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 1
-    app = QCoreApplication.instance() or QCoreApplication(sys.argv)
-    runner = TraceRunner()
-    outcome: dict[str, str] = {}
-
-    def done(key: str, value: str) -> None:
-        outcome[key] = value
-        app.quit()
-
-    runner.finished.connect(lambda svg: done("svg", svg))
-    runner.failed.connect(lambda message: done("error", message))
-    runner.start(data, TraceSettings())
-    app.exec()
-    if "error" in outcome:
-        print(f"error: {outcome['error']}", file=sys.stderr)
-        return 1
-    svg = outcome["svg"]
+    found = []
     if codes:
         # Decoded values can be any text, and Windows pipes default to cp1252:
         # escape what the output can't encode instead of crashing. Frozen
@@ -811,8 +808,24 @@ def export(image_path: str, svg_path: str, codes: bool = False) -> int:
             print(f"{display_name(code.format)}: {code.text}")
         for code in skipped:
             print(f"{display_name(code.format)}: {code.text} (left as traced: {code.reason})", file=sys.stderr)
-        if found:
-            svg = overlay_codes(svg, found)
+    app = QCoreApplication.instance() or QCoreApplication(sys.argv)
+    runner = TraceRunner()
+    outcome: dict[str, str] = {}
+
+    def done(key: str, value: str) -> None:
+        outcome[key] = value
+        app.quit()
+
+    runner.finished.connect(lambda svg: done("svg", svg))
+    runner.failed.connect(lambda message: done("error", message))
+    runner.start(data, TraceSettings(), erase_regions(found))
+    app.exec()
+    if "error" in outcome:
+        print(f"error: {outcome['error']}", file=sys.stderr)
+        return 1
+    svg = outcome["svg"]
+    if found:
+        svg = overlay_codes(svg, found)
     Path(svg_path).write_text(svg, encoding="utf-8")
     return 0
 
