@@ -1,0 +1,30 @@
+[project]
+name = "image-to-vector"
+version = "0.1.0"
+description = "Desktop app that traces JPEG/PNG/TIFF bitmaps into SVG with a live preview"
+requires-python = ">=3.12"
+dependencies = [
+    "pillow>=12.3.0",
+    "pyobjc-framework-cocoa>=12.2.2 ; sys_platform == 'darwin'",
+    "pyside6>=6.11.2",
+    "vtracer>=0.6.15",
+    "zxing-cpp>=3.1.1",
+]
+
+[project.scripts]
+image-to-vector = "image_to_vector.app:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["tests"]
+
+[dependency-groups]
+dev = [
+    "pyinstaller>=6.22.3",
+    "pytest>=9.1.1",
+    "segno>=1.6.6",
+]
