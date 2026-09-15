@@ -1,3 +1,4 @@
+import os
 import subprocess
 import sys
 import textwrap
@@ -160,7 +161,9 @@ def test_both_panes_render_at_device_pixels_on_high_dpi_screens(tmp_path):
         print(svg._cache.devicePixelRatio(), svg._cache.width() / svg._cache_rect.width(),
               bitmap._scaled.devicePixelRatio(), bitmap._scaled.width() / bitmap.content_rect().width())
     """)
-    env = {"QT_QPA_PLATFORM": "offscreen", "QT_SCALE_FACTOR": "2", "PATH": "/usr/bin:/bin"}
+    # The full environment, not a minimal one: Windows Python needs SYSTEMROOT
+    # to start and Qt finds its DLLs through PATH.
+    env = dict(os.environ, QT_QPA_PLATFORM="offscreen", QT_SCALE_FACTOR="2")
     result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, env=env, timeout=60)
     assert result.returncode == 0, result.stderr
     values = [float(v) for v in result.stdout.split()]

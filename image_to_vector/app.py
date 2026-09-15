@@ -800,6 +800,12 @@ def export(image_path: str, svg_path: str, codes: bool = False) -> int:
         return 1
     svg = outcome["svg"]
     if codes:
+        # Decoded values can be any text, and Windows pipes default to cp1252:
+        # escape what the output can't encode instead of crashing. Frozen
+        # windowed apps have no streams at all.
+        for stream in (sys.stdout, sys.stderr):
+            if stream is not None:
+                stream.reconfigure(errors="backslashreplace")
         found, skipped = detect_codes(load_image(data))
         for code in found:
             print(f"{display_name(code.format)}: {code.text}")

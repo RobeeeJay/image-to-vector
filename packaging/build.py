@@ -86,7 +86,7 @@ def smoke_test(exe: Path) -> None:
         )
         if result.returncode != 0:
             sys.exit(f"export failed ({result.returncode}): {result.stderr}")
-        text = svg_path.read_text()
+        text = svg_path.read_text(encoding="utf-8")
         root = ET.parse(svg_path).getroot()
         fills = set(re.findall(r'fill="#([0-9A-F]{6})"', text))
         if root.tag != "{http://www.w3.org/2000/svg}svg" or len(fills) < 3:

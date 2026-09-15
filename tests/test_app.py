@@ -214,7 +214,8 @@ def test_dropping_a_supported_image_opens_it(qapp, shapes_png):
     view.dragEnterEvent(enter)
     assert enter.isAccepted()
     view.dropEvent(drop)
-    assert dropped == [str(shapes_png)]
+    # Compared as paths: Qt gives C:/... with forward slashes on Windows.
+    assert [Path(p) for p in dropped] == [shapes_png], dropped
 
 
 def test_dragging_an_unsupported_file_is_refused(qapp, tmp_path):
@@ -287,10 +288,24 @@ def test_export_with_codes_lists_and_overlays_them(qr_png, tmp_path):
     assert 'data-format="QRCode"' in out.read_text(encoding="utf-8")
 
 
-def _run_export(*args):
+def test_export_prints_values_the_output_encoding_cannot_represent(tmp_path):
+    # Windows pipes default to cp1252, which has no Cyrillic; the value must
+    # come out escaped rather than crash the export with UnicodeEncodeError.
+    from conftest import symbol_image
+
+    png, out = tmp_path / "ru.png", tmp_path / "out.svg"
+    symbol_image("товар", "QRCode", 8).save(png)
+    result = _run_export("--codes", png, out, PYTHONIOENCODING="cp1252")
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "QR Code: \\u0442\\u043e\\u0432\\u0430\\u0440", result.stdout
+    assert 'data-value="товар"' in out.read_text(encoding="utf-8")
+
+
+def _run_export(*args, **env_overrides):
     # A real subprocess with no display settings: export must work headless,
     # which is how bundles are smoke-tested on CI.
     env = {k: v for k, v in os.environ.items() if k != "QT_QPA_PLATFORM"}
+    env.update(env_overrides)
     return subprocess.run(
         [sys.executable, "-m", "image_to_vector", "--export", *map(str, args)],
         capture_output=True, text=True, env=env, timeout=60,
@@ -302,7 +317,7 @@ def test_export_writes_the_traced_svg_without_a_window(shapes_png, tmp_path):
     result = _run_export(shapes_png, out)
     assert result.returncode == 0, result.stderr
     assert ET.parse(out).getroot().tag == "{http://www.w3.org/2000/svg}svg"
-    fills = set(re.findall(r'fill="#([0-9A-F]{6})"', out.read_text()))
+    fills = set(re.findall(r'fill="#([0-9A-F]{6})"', out.read_text(encoding="utf-8")))
     assert len(fills) >= 4, f"expected the four source colors, got {fills}"
 
 

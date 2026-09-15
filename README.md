@@ -53,8 +53,14 @@ Qt's offscreen platform.
   signed with a Developer ID and notarized (or the user right-clicks → Open).
   It runs only on the architecture it was built on.
 - **Windows and Linux:** `.github/workflows/bundles.yml` builds and
-  smoke-tests on GitHub's runners. This has not been run yet, so treat those
-  builds as untested.
+  smoke-tests on GitHub's runners. On its first run the Linux bundle built and
+  passed its smoke test; that is headless, so it has not been seen on a Linux
+  desktop. Windows failed in the test suite. Two tests broke on Windows by
+  construction: a subprocess started with a stripped environment (Windows
+  Python needs `SYSTEMROOT`), and a path compared as a string (Qt returns
+  `C:/...` with forward slashes). Both are fixed, but the Windows job has not
+  run again yet. Test failures now appear as annotations on the workflow run,
+  which can be read without access to the logs.
 
 Gotcha: zxing-cpp's native code imports Python's `json` module when it reads a
 barcode's metadata. PyInstaller's import scan can't see that, so the first

@@ -26,5 +26,6 @@ pythonpath = ["tests"]
 dev = [
     "pyinstaller>=6.22.3",
     "pytest>=9.1.1",
+    "pytest-github-actions-annotate-failures>=0.4.2",
     "segno>=1.6.6",
 ]
