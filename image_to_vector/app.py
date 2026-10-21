@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QFormLayout,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QMainWindow,
     QMessageBox,
@@ -39,7 +40,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .codes import DetectedCode, detect_codes, display_name, erase_regions, overlay_codes
+from .codes import DetectedCode, detect_codes, display_name, erase_regions, overlay_codes, qr_code_svg
 from .runner import TraceRunner
 from .tracer import SUPPORTED_SUFFIXES, TraceSettings, is_supported, load_image
 
@@ -122,8 +123,8 @@ class ImageView(QWidget):
         self._scaled: QPixmap | None = None
         self._hover = False
 
-    def set_image(self, image: QImage) -> None:
-        self._pixmap = QPixmap.fromImage(image)
+    def set_image(self, image: QImage | None) -> None:
+        self._pixmap = None if image is None else QPixmap.fromImage(image)
         self._scaled = None
         self.update()
 
@@ -472,12 +473,14 @@ class MainWindow(QMainWindow):
 
         self.open_action = QAction("Open Image…", self, shortcut=QKeySequence.StandardKey.Open)
         self.open_action.triggered.connect(self.choose_image)
+        self.qr_action = QAction("New QR Code from URL…", self)
+        self.qr_action.triggered.connect(self.choose_qr_text)
         self.save_action = QAction("Save SVG…", self, shortcut=QKeySequence.StandardKey.Save, enabled=False)
         self.save_action.triggered.connect(self.choose_save_path)
         quit_action = QAction("Quit", self, shortcut=QKeySequence.StandardKey.Quit)
         quit_action.triggered.connect(self.close)
         file_menu = self.menuBar().addMenu("&File")
-        file_menu.addActions([self.open_action, self.save_action])
+        file_menu.addActions([self.open_action, self.qr_action, self.save_action])
         file_menu.addSeparator()
         file_menu.addAction(quit_action)
 
@@ -668,6 +671,35 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(f"{name} — Image to Vector")
         self._start_trace()
 
+    def choose_qr_text(self) -> None:
+        text, ok = QInputDialog.getText(self, "New QR Code", "URL:")
+        if ok and text.strip():
+            self.show_qr_code(text.strip())
+
+    def show_qr_code(self, text: str) -> None:
+        """Preview a generated QR code in place of a trace; there is no bitmap behind it."""
+        try:
+            svg = qr_code_svg(text)
+        except ValueError as exc:
+            QMessageBox.warning(self, "Can't make QR code", str(exc))
+            return
+        # Without a path, setting changes don't retrace over the QR code.
+        self._runner.cancel()
+        self._debounce.stop()
+        self._path = self._data = self._image = self._traced_svg = None
+        self._codes = []
+        self._set_detect_checked(False)
+        self.detect_button.setEnabled(False)
+        self.codes_label.hide()
+        self.image_view.set_image(None)
+        self._svg = svg
+        self.svg_view.set_svg(None)  # refit to the new content
+        self.svg_view.set_svg(svg)
+        self.info_label.setText(f"QR code: {text}")
+        self.setWindowTitle("QR Code — Image to Vector")
+        self.status_label.setText("")
+        self._on_busy_changed(False)
+
     def _start_trace(self) -> None:
         self._debounce.stop()
         self._trace_started = time.monotonic()
@@ -759,14 +791,17 @@ class MainWindow(QMainWindow):
         super().closeEvent(event)
 
 
-def default_save_path(source: str) -> str:
-    """source renamed to .svg, in the same folder unless that is app data under ~/Library."""
+def default_save_path(source: str | None) -> str:
+    """source renamed to .svg, in the same folder unless that is app data under ~/Library; no source is a QR code."""
+    pictures = Path(QStandardPaths.writableLocation(QStandardPaths.StandardLocation.PicturesLocation))
+    if source is None:
+        return str(pictures / "QR code.svg")
     # Images dropped from Messages live in ~/Library/Messages/Attachments;
     # an SVG saved there would be lost inside Messages' own storage.
     src = Path(source)
     folder = src.parent
     if folder.is_relative_to(Path.home() / "Library"):
-        folder = Path(QStandardPaths.writableLocation(QStandardPaths.StandardLocation.PicturesLocation))
+        folder = pictures
     return str(folder / f"{src.stem}.svg")
 
 
@@ -840,6 +875,16 @@ def main() -> int:
             print("usage: image-to-vector --export [--codes] IMAGE OUT.svg", file=sys.stderr)
             return 2
         return export(paths[0], paths[1], codes="--codes" in args)
+    if args[:1] == ["--qr"]:
+        if len(args) != 3:
+            print("usage: image-to-vector --qr URL OUT.svg", file=sys.stderr)
+            return 2
+        try:
+            Path(args[2]).write_text(qr_code_svg(args[1]), encoding="utf-8")
+        except (ValueError, OSError) as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        return 0
     app = QApplication(sys.argv)
     app.setApplicationName("Image to Vector")
     window = MainWindow()

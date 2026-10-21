@@ -146,6 +146,27 @@ overlays them.
   found, 30° not). QR and Data Matrix codes are found at any angle and when
   inverted.
 
+### Making a QR code from a URL
+
+**File → New QR Code from URL…** asks for a URL and shows its QR code in the
+preview, where **Save SVG…** saves it. No bitmap is involved, so the trace
+controls do nothing until an image is opened again. From the command line:
+`image-to-vector --qr https://example.org qr.svg`.
+
+The code is black on white, with the four-module quiet zone the QR standard
+asks for. zxing-cpp picks the version and error-correction level. As with
+detected codes, the symbol is decoded again before it is used, and one that
+does not decode to exactly the URL is refused. The text is not checked to be
+a URL: anything that fits in a QR code is encoded as typed (1,000
+characters worked), and text that doesn't (3,000 characters) is refused with
+zxing-cpp's "Input too long" error.
+
+Gotcha when checking that a test fails with its fix reverted: swapping
+`QUIET_ZONE = 4` for `= 1` with `sed` and copying the original back within
+the same second left a stale `.pyc`. Python checks a source's size and
+whole-second mtime, and both matched, so the restored code kept failing. Delete
+`__pycache__` after such swaps.
+
 Controls that vtracer ignores in the current mode are greyed out. Which ones
 those are was measured by tracing with each control at both ends and
 comparing the output, not taken from documentation.

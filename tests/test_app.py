@@ -15,6 +15,7 @@ from conftest import BLUE, GREEN, RED, draw_shapes
 from pathlib import Path
 
 from image_to_vector.app import SLIDERS, ImageView, MainWindow, default_save_path
+from image_to_vector.codes import qr_code_svg
 from image_to_vector.runner import TraceRunner
 from image_to_vector.tracer import TraceSettings, trace
 
@@ -353,3 +354,49 @@ def test_unreadable_image_shows_an_error_and_keeps_the_window_usable(window, tmp
     window.open_path(str(bad))
     assert warnings and "broken.png" in warnings[0], warnings
     assert not window.image_view.has_image()
+
+
+def test_qr_code_from_url_is_previewed_and_saved_as_is(window, tmp_path):
+    window.show_qr_code("https://example.org/page")
+    assert window.svg_view.has_content() and not window.image_view.has_image()
+    assert window.save_action.isEnabled() and not window.detect_button.isEnabled()
+    out = tmp_path / "qr.svg"
+    window.write_svg(str(out))
+    assert out.read_text(encoding="utf-8") == qr_code_svg("https://example.org/page")
+
+
+def test_changing_a_setting_does_not_retrace_over_a_qr_code(window, shapes_png, wait_until):
+    # The QR code has no bitmap behind it; a retrace of the previous image would replace it.
+    window.open_path(str(shapes_png))
+    assert wait_until(lambda: window.svg_text() is not None)
+    window.show_qr_code("https://example.org")
+    window.apply_settings(replace(window.settings(), filter_speckle=20))
+    assert not wait_until(lambda: window._runner.is_busy(), timeout=1), "a setting change retraced"
+    assert window.svg_text() == qr_code_svg("https://example.org")
+
+
+def test_qr_code_that_cannot_be_made_shows_an_error_and_keeps_the_preview(window, monkeypatch):
+    warnings = []
+    monkeypatch.setattr(QMessageBox, "warning", lambda *args: warnings.append(args[2]))
+    window.show_qr_code("https://example.org")
+    window.show_qr_code("x" * 3000)
+    assert warnings and "too long" in warnings[0], warnings
+    assert window.svg_text() == qr_code_svg("https://example.org")
+
+
+def test_qr_code_saves_to_pictures_by_default():
+    # With no source image there is no folder to save beside.
+    from PySide6.QtCore import QStandardPaths
+
+    pictures = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.PicturesLocation)
+    assert Path(default_save_path(None)) == Path(pictures) / "QR code.svg", default_save_path(None)
+
+
+def test_qr_command_line_writes_the_svg(tmp_path):
+    out = tmp_path / "qr.svg"
+    result = subprocess.run(
+        [sys.executable, "-m", "image_to_vector", "--qr", "https://example.org", str(out)],
+        capture_output=True, text=True, timeout=60,
+    )
+    assert result.returncode == 0, result.stderr
+    assert out.read_text(encoding="utf-8") == qr_code_svg("https://example.org")

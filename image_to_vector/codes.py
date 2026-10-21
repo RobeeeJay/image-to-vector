@@ -1,4 +1,4 @@
-"""Find barcodes and QR codes in a bitmap and redraw them as exact vector symbols.
+"""Find barcodes and QR codes in a bitmap and redraw them as exact vector symbols; also make new QR codes.
 
 A traced code is only approximately right and often won't scan. Each code
 zxing-cpp finds is re-encoded from its decoded value, the new symbol is checked
@@ -337,6 +337,27 @@ def _code_svg(code: DetectedCode, black_and_white: bool) -> str:
         everything_else = runs(lambda x, y: not module(x, y), range(-mx, cols + mx), range(-my, rows + my))
         body = f'<path d="{everything_else}" fill="#000000"/>'
     return f"<g data-format={quoteattr(code.format)} data-value={quoteattr(code.text)}>\n{body}\n</g>"
+
+
+QUIET_ZONE = 4  # modules; the QR standard's minimum, and scanners rely on it
+
+
+def qr_code_svg(text: str, module_px: int = 10) -> str:
+    """Standalone SVG of a QR code for text, black on white; ValueError if empty, too long or not faithful."""
+    symbol = zxingcpp.create_barcode(text, zxingcpp.BarcodeFormat.QRCode)
+    rendered = _to_pil(symbol.to_image(scale=4, add_quiet_zones=True))
+    if not any(b.format == zxingcpp.BarcodeFormat.QRCode and b.text == text for b in zxingcpp.read_barcodes(rendered)):
+        raise ValueError("the generated QR code didn't decode to the same text")
+    modules = _module_grid(symbol, linear=False)
+    n = len(modules)
+    lo, hi = QUIET_ZONE * module_px, (QUIET_ZONE + n) * module_px
+    code = DetectedCode("QRCode", text, ((lo, lo), (hi, lo), (hi, hi), (lo, hi)), modules, "#000000", "#FFFFFF", False)
+    size = (n + 2 * QUIET_ZONE) * module_px
+    return (
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{size}" height="{size}" viewBox="0 0 {size} {size}">\n'
+        f'<rect width="{size}" height="{size}" fill="#FFFFFF"/>\n'
+        f"{_code_svg(code, black_and_white=False)}\n</svg>\n"
+    )
 
 
 def _rgb(hex_color: str) -> tuple[int, int, int]:

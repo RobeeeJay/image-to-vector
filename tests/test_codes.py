@@ -8,7 +8,7 @@ from PIL import Image
 
 from conftest import draw_shapes, symbol_image
 from image_to_vector import codes as codes_module
-from image_to_vector.codes import detect_codes, erase_regions, overlay_codes
+from image_to_vector.codes import detect_codes, erase_regions, overlay_codes, qr_code_svg
 from image_to_vector.tracer import TraceSettings, trace
 
 
@@ -213,3 +213,29 @@ def test_formats_that_cannot_be_generated_are_reported(monkeypatch):
 
 def test_image_without_codes_finds_nothing():
     assert detect_codes(draw_shapes((400, 300)).convert("RGBA")) == ([], [])
+
+
+@pytest.mark.parametrize("text", ["https://example.org/a?b=1&c=<2>", "https://пример.рф/товар", "x" * 1000])
+def test_generated_qr_code_scans_back_to_its_url(qapp, text):
+    # Rasterised as the preview does, then scanned: the saved SVG must be a working code.
+    svg = qr_code_svg(text)
+    size = int(re.search(r'width="(\d+)"', svg).group(1))
+    scanned = [(b.format.name, b.text) for b in zxingcpp.read_barcodes(render(svg, (size, size)))]
+    assert scanned == [("QRCode", text)], scanned
+
+
+def test_generated_qr_code_keeps_the_standard_quiet_zone(qapp):
+    # Scanners need four modules of light margin; the 1-module margin used for overlays is too little.
+    svg = qr_code_svg("https://example.org", module_px=10)
+    size = int(re.search(r'width="(\d+)"', svg).group(1))
+    image = render(svg, (size, size), transparent=True).convert("RGBA")
+    dark = [(x, y) for y in range(size) for x in range(size) if image.getpixel((x, y))[0] < 128]
+    first = min(min(x for x, _ in dark), min(y for _, y in dark))
+    assert first == 40, f"first dark pixel at {first} px, expected 4 modules of 10 px"
+    assert image.getpixel((0, 0)) == (255, 255, 255, 255), "margin is not opaque white"
+
+
+@pytest.mark.parametrize("text, message", [("", "empty"), ("x" * 3000, "too long")])
+def test_qr_code_that_cannot_be_made_raises_value_error(text, message):
+    with pytest.raises(ValueError, match="(?i)" + message):
+        qr_code_svg(text)
